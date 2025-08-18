@@ -1,0 +1,14 @@
+[Unit]
+Description={{ project_name }} Java Application
+After=network.target
+
+[Service]
+User={{ username }}
+WorkingDirectory=/var/www/html/{{ ENV }}/{{ project_name }}/advicefit-web
+ExecStart=/usr/bin/java -jar /var/www/html/{{ ENV }}/{{ project_name }}/target/.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

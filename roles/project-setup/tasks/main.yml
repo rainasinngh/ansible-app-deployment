@@ -1,0 +1,1009 @@
+---
+
+#------------------------------------------------------------------------------#
+#                               SYSTEM UPDATE                                  #
+#------------------------------------------------------------------------------#
+
+# - name: gather facts
+#   setup:
+#     gather_subset: distribution,!all,!min
+
+# - name: Update Ubuntu Server Packages
+#   apt:
+#     update_cache: yes
+
+# - name: Upgrade Ubuntu Server Packages
+#   apt:
+#     upgrade: yes
+
+#-------------------------------------------------------------------------------#
+#                          Install and Enable Nginx                             #                         
+#-------------------------------------------------------------------------------#
+
+# - name: Install Nginx Service
+#   apt: 
+#     name: nginx
+#     state: present
+
+# - name: Start & Enable Nginx Service
+#   service:
+#     name: nginx
+#     state: started
+#     enabled: yes
+
+   
+#--------------------------------------------------------------------------------#
+#                          Start docker engine setup                             #                         
+#--------------------------------------------------------------------------------#
+
+# - name: Docker Engine Setup
+#   when: project_type in ["nodejs-docker" , "php-docker" , "java-docker" , "react-docker"]
+#   block:
+#     - name: Install prerequisites
+#       apt:
+#         name: "{{ item }}"
+#         state: present
+#       loop:
+#         - apt-transport-https
+#         - ca-certificates
+#         - curl
+#         - software-properties-common
+
+#     - name: Add Docker GPG key
+#       shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+#       args:
+#         executable: /bin/bash
+
+#     - name: Add Docker repository
+#       shell: echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+#       args:
+#         executable: /bin/bash
+ 
+#     - name: Update apt repositories
+#       apt:
+#         update_cache: yes
+
+#     - name: Check Docker package policy
+#       command: apt-cache policy docker-ce
+#       register: docker_policy
+
+#     - name: Install Docker
+#       apt:
+#         name: docker-ce
+#         state: present
+#       when: "'Installed: (none)' in docker_policy.stdout"
+
+
+# #-------------------------------------------------------------------------------#
+# #                          Start docker-compose engine setup                    #                         
+# #-------------------------------------------------------------------------------#
+    
+    
+#     - name: Download and install Docker Compose
+#       shell: "curl -SL https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose"
+
+#     - name: Set executable permissions
+#       command: "chmod +x /usr/local/bin/docker-compose"
+      
+#     - name: Check if /usr/bin/docker-compose exists
+#       ansible.builtin.stat:
+#         path: /usr/bin/docker-compose
+#       register: docker_compose_symlink
+
+#     - name: Create docker-compose symlink only if it doesn't exist
+#       ansible.builtin.file:
+#         src: /usr/local/bin/docker-compose
+#         dest: /usr/bin/docker-compose
+#         state: link
+#       when: not docker_compose_symlink.stat.exists
+#       become: yes
+    
+#     - name: Restart Docker service
+#       systemd:
+#         name: docker
+#         state: restarted
+
+# #-------------------------------------------------------------------------------#
+# #                          End Docker-Compose Engine Setup                      #                         
+# #-------------------------------------------------------------------------------#
+
+
+ 
+ 
+#-------------------------------------------------------------------------------#
+#                          Common setup for all project types                   #                         
+#-------------------------------------------------------------------------------#
+
+
+- name: Ensure group exists
+  ansible.builtin.group:
+    name: "{{groupname}}"
+    state: present
+
+- name: Ensure user exists
+  ansible.builtin.user:
+    name: "{{username}}"
+    shell: /bin/bash
+    groups: "{{groupname}}"
+    append: yes
+
+- name: Create project directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{username}}"
+    group: "{{groupname}}"
+    mode: 0755
+  loop:
+    - /var/www/html/{{ ENV }}/{{ project_name }}
+
+
+
+- name: Mark project directory as safe for git
+  command: git config --global --add safe.directory /var/www/html/{{ ENV }}/{{ project_name }}
+  become: yes
+  
+
+- name: Check if project repo already exists
+  stat:
+    path: /var/www/html/{{ ENV }}/{{ project_name }}/.git
+  register: repo_git_dir
+
+- name: Clone project repository
+  ansible.builtin.git:
+    repo: "{{ repo }}"
+    dest: /var/www/html/{{ ENV }}/{{ project_name }}
+    version: "{{ branch | default('master') }}"
+    single_branch: yes
+  when: not repo_git_dir.stat.exists
+  become: yes
+  
+
+- name: Change project ownership
+  file:
+    path: /var/www/html/{{ENV}}/{{project_name}}
+    recurse: yes
+    owner: "{{ username }}"
+    group: "{{ groupname }}"
+  become: yes
+
+
+ 
+#-------------------------------------------------------------------------------#
+#                          Common database (mysql)  setup                       #                         
+#-------------------------------------------------------------------------------#
+
+
+
+- name: Setup database
+  when: project_type in ['nodejs', 'java', 'php', 'react']
+  block:
+    - name: Install MySQL 8.0 and dependencies
+      package:
+        name: "{{ item }}"
+        state:  present
+        update_cache: yes
+      loop:
+        - mysql-server
+        - mysql-client
+        - python3-mysqldb
+        - libmysqlclient-dev
+      tags: mysql
+
+    - name: Ensure MySQL service is running and enabled
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+      tags: mysql
+
+    - name: Create MySQL user
+      mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_pass }}"
+        priv: "*.*:ALL"
+        host: "%"
+        state: present
+      tags: mysql
+
+    - name: Create MySQL database
+      mysql_db:
+        name: "{{ db_name }}"
+        state: present
+      tags: mysql
+
+ 
+  
+#-------------------------------------------------------------------------------#
+#                          Nodejs-setup (non-docker)                            #                         
+#-------------------------------------------------------------------------------#
+
+
+
+- name: nodejs setup
+  when: project_type == 'nodejs'
+  block:
+    - name: Install required APT packages
+      apt:
+        name: "{{ nodejs_deps }}"
+        state: present
+        update_cache: yes
+      loop:
+        - curl
+        - software-properties-common
+        - build-essential
+      loop_control:
+        loop_var: nodejs_deps
+
+    - name: Run Node.js 18.x setup script
+      shell: curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+
+    - name: Install Node.js
+      apt:
+        name: nodejs
+        state: present
+
+    - name: Install PM2 globally
+      npm:
+        name: pm2
+        global: yes
+
+    - name: Install Node.js project dependencies
+      become: yes
+      become_user: "{{ username }}"
+      npm:
+        path: "/var/www/html/{{ ENV }}/{{ project_name }}"
+        production: no
+
+    - name: Start app with PM2
+      become: yes
+      become_user: "{{ username }}"
+      shell: |
+        PORT={{ WEB_PORT }} pm2 start index.js --name {{ project_name }}-{{ ENV }} -f
+      args: 
+        chdir: "/var/www/html/{{ ENV }}/{{ project_name }}"
+
+    - name: Save PM2 process list
+      become: yes
+      become_user: "{{ username }}"
+      command: pm2 save
+
+    - name: Enable PM2 startup on boot
+      become: yes
+      command: |
+        env PATH=$PATH:/usr/bin pm2 startup systemd -u {{ username }} --hp /home/{{ username }}
+
+
+    - name: Create nginx site configuration for React
+      ansible.builtin.template:
+        src: nodejs-nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{project_name}}.com.conf
+        mode: '0644'
+
+    - name: Create symlink to enable React site
+      file: 
+        src: /etc/nginx/sites-available/{{project_name}}.com.conf
+        dest: /etc/nginx/sites-enabled/{{project_name}}.com.conf
+        state: link
+
+    - name: Restart nginx for React
+      service: 
+        name: nginx
+        state: restarted
+        enabled: yes
+
+
+ 
+#-------------------------------------------------------------------------------#
+#                          php-setup (non-docker)                               #                         
+#-------------------------------------------------------------------------------#
+
+
+
+- name: php setup
+  when: project_type == 'php'
+  block:
+    - name: Install PHP dependencies
+      apt:
+        name: software-properties-common
+        state: present
+
+    - name: Add PHP repository
+      apt_repository:
+        repo: "ppa:ondrej/php"
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install LAMP stack
+      apt:
+        pkg:
+          - "php{{php_version}}"
+          - "php{{php_version}}-mysql"
+          - "php{{php_version}}-curl"
+          - "php{{php_version}}-cgi"
+          - "php{{php_version}}-xsl"
+          - "php{{php_version}}-gd"
+          - "php{{php_version}}-mbstring"
+          - "php{{php_version}}-zip"
+          - "php{{php_version}}-xml"
+          - "php{{php_version}}-soap"
+          - "php{{php_version}}-intl"
+          - "php{{php_version}}-fpm"
+          - "php{{php_version}}-cli"
+          - "php{{php_version}}-common"
+          - "php{{php_version}}-bcmath"
+          - redis
+        state: present
+        update_cache: yes
+
+
+    - name: Ensure timezone database is installed
+      apt:
+        name: tzdata
+        state: present
+
+    - name: Set system timezone
+      timezone:
+        name: Asia/Kolkata
+
+    - name: Set PHP timezone in CLI php.ini
+      lineinfile:
+        path: "/etc/php/{{ php_version }}/cli/php.ini"
+        regexp: '^;?date.timezone\s*='
+        line: "date.timezone = Asia/Kolkata"
+
+    - name: Set PHP timezone in FPM php.ini
+      lineinfile:
+        path: "/etc/php/{{ php_version }}/fpm/php.ini"
+        regexp: '^;?date.timezone\s*='
+        line: "date.timezone = Asia/Kolkata"
+
+    - name: Restart PHP-FPM 
+      service:
+        name: "php{{ php_version }}-fpm"
+        state: restarted
+
+    # Use  checksum value
+    - name: Fetch Composer checksum
+      uri:
+        url: https://getcomposer.org/download/latest-stable/composer.phar.sha256sum
+        return_content: yes
+      register: composer_checksum
+
+    - name: Install Composer
+      get_url:
+        url: https://getcomposer.org/download/latest-stable/composer.phar
+        checksum: "sha256:{{ composer_checksum.content.split()[0] }}"
+        dest: /usr/local/bin/composer.phar
+        mode: 0755
+
+    - name: Symlink composer.phar
+      file:
+        src: /usr/local/bin/composer.phar
+        dest: /usr/local/bin/composer
+        state: link
+
+    - name: Copy .env.example to .env
+      command: cp /var/www/html/{{ENV}}/{{project_name}}/.env.example /var/www/html/{{ENV}}/{{project_name}}/.env
+
+
+    - name: Update .env database settings 
+      lineinfile:
+        path: "/var/www/html/{{ ENV }}/{{ project_name }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: 'DB_CONNECTION', value: 'mysql' }
+        - { key: 'DB_HOST', value: '{{ db_host }}' }
+        - { key: 'DB_PORT', value: '3306' }
+        - { key: 'DB_DATABASE', value: '{{ db_name }}' }
+        - { key: 'DB_USERNAME', value: '{{ db_user }}' }
+        - { key: 'DB_PASSWORD', value: '{{ db_pass }}' }
+      become: yes
+
+    - name: Check if composer.json exists
+      ansible.builtin.stat:
+        path: /var/www/html/{{ ENV }}/{{ project_name }}/composer.json
+      register: composer_file
+
+    - name: Install dependencies with Composer
+      ansible.builtin.command:
+        cmd: php{{ php_version }} /usr/local/bin/composer install --no-interaction --prefer-dist
+      args:
+        chdir: /var/www/html/{{ ENV }}/{{ project_name }}
+      become: true
+      become_user: "{{ username }}"
+      when: composer_file.stat.exists
+
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}
+
+    - name: Ensure Laravel app files are owned by correct user
+      file:
+        path: "/var/www/html/{{ ENV }}/{{ project_name }}"
+        state: directory
+        recurse: yes
+        owner: "{{ username }}"
+        group: "{{ groupname }}"
+
+
+    - name: Generate Laravel key
+      ansible.builtin.command:
+        cmd: php{{ php_version }} artisan key:generate
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}
+
+    - name: Run database migrations
+      ansible.builtin.command:
+        cmd: php{{ php_version }} artisan migrate:fresh --seed
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}
+
+    - name: Cache configuration
+      ansible.builtin.command:
+        cmd: php{{ php_version }} artisan config:cache
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}
+
+    - name: Configure PHP-FPM socket
+      lineinfile:
+        path: /etc/php/{{php_version}}/fpm/pool.d/www.conf
+        regexp: '^listen =.*$'
+        line: 'listen = 127.0.0.1:9000'
+
+    - name: Create nginx site 
+      template:
+        src: php-nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{project_name}}.com.conf
+
+    - name: Set server root in nginx config
+      lineinfile: 
+        dest: /etc/nginx/sites-available/{{project_name}}.com.conf
+        regexp: '^(\s+)root /var/www/html' 
+        line: "\\1root /var/www/html/{{ENV}}/{{project_name}}/public;"
+        backrefs: yes
+
+    - name: Create symlink to enable site
+      file: 
+        src: /etc/nginx/sites-available/{{project_name}}.com.conf
+        dest: /etc/nginx/sites-enabled/{{project_name}}.com.conf
+        state: link
+
+    - name: Set Nginx user to www-data
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: '^user\s+'
+        line: 'user www-data;'
+
+    - name: Change storage permissions
+      ansible.builtin.file:
+        path: "{{ item }}"
+        recurse: yes
+        owner: "{{username}}"
+        group: "www-data" 
+        mode: 0755
+      loop:
+        - /var/www/html/{{ENV}}/{{project_name}}/bootstrap/cache
+        - /var/www/html/{{ENV}}/{{project_name}}/storage
+
+    - name: Start and enable PHP-FPM
+      service: 
+        name: "php{{php_version}}-fpm"
+        state: restarted
+        enabled: yes
+
+    - name: Restart nginx
+      service: 
+        name: nginx
+        state: restarted
+        enabled: yes
+
+    - name: Clear cache
+      ansible.builtin.command:
+        cmd: php{{ php_version }} artisan optimize
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}
+
+ 
+#-------------------------------------------------------------------------------#
+#                          java-setup (non-docker)                              #                         
+#-------------------------------------------------------------------------------#
+
+- name: java setup
+  when: project_type == 'java'
+  block:
+    - name: Install Java
+      ansible.builtin.apt: 
+        name: openjdk-8-jdk
+        update_cache: yes
+        state: present
+
+    - name: Install Maven
+      when: project_type == 'java'
+      ansible.builtin.apt:
+        name: maven
+        state: present
+        update_cache: yes
+
+
+    - name: Build Java app using Maven
+      ansible.builtin.command: mvn clean install -Dmaven.test.skip=true -P{{ buildProfile }}
+      args:
+        chdir: /var/www/html/{{ ENV }}/{{ project_name }}/advicefit-web
+
+
+    - name: Create systemd service for Java app
+      ansible.builtin.template:
+        src: java-sample.service.j2
+        dest: /etc/systemd/system/{{ project_name }}.service
+        mode: '0644'
+      notify: restart java app
+
+    - name: Enable and start Java app service
+      ansible.builtin.systemd:
+        name: "{{ project_name }}"
+        enabled: yes
+        state: started
+
+    - name: Add nginx site for Java
+      ansible.builtin.template:
+        src: java-nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{project_name}}.com.conf
+        mode: '0644'
+
+    - name: Create symlink to enable Java site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/{{project_name}}.com.conf
+        dest: /etc/nginx/sites-enabled/{{project_name}}.com.conf
+        state: link
+
+    - name: Reload Nginx to apply config
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+     
+     
+  
+
+#-------------------------------------------------------------------------------#
+#                          React-setup (non-docker)                             #                         
+#-------------------------------------------------------------------------------#
+
+- name: react setup
+  when: project_type == 'react'
+  block:
+    - name: Install Node.js dependencies for React
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - software-properties-common
+
+    - name: Run Node.js 18.x setup script for React
+      shell: curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+
+    - name: Install build-essential for React
+      apt:
+        name: build-essential
+        state: present
+
+    - name: Install npm dependencies
+      ansible.builtin.command:
+        cmd: npm install
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}
+
+    - name: Build React application
+      ansible.builtin.command:
+        cmd: npm run build
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}
+
+    - name: Create nginx site configuration for React
+      ansible.builtin.template:
+        src: react-nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{project_name}}.com.conf
+        mode: '0644'
+
+    - name: Create symlink to enable React site
+      file: 
+        src: /etc/nginx/sites-available/{{project_name}}.com.conf
+        dest: /etc/nginx/sites-enabled/{{project_name}}.com.conf
+        state: link
+
+    - name: Restart nginx for React
+      service: 
+        name: nginx
+        state: restarted
+        enabled: yes
+
+ 
+#-------------------------------------------------------------------------------#
+#                          Common-docker setup                                  #                         
+#-------------------------------------------------------------------------------#
+
+
+- name: Docker setup tasks
+  when: project_type in ['nodejs-docker', 'php-docker', 'java-docker', 'react-docker']
+  block:
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{username}}"
+        groups: docker
+        append: yes
+
+    - name: Create docker-specific directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{username}}"
+        group: "{{groupname}}"
+        mode: 0700
+      loop:
+        - /opt/data/{{ENV}}/{{project_name}}/redis
+        - /opt/data/{{ENV}}/{{project_name}}/mysql
+
+    - name: Check if original docker project directory exists
+      ansible.builtin.stat:
+        path: /var/www/html/{{ ENV }}/{{ project_name }}
+      register: docker_project_dir
+
+    - name: Check if renamed docker project directory already exists
+      ansible.builtin.stat:
+        path: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+      register: docker_project_target_dir
+
+    - name: Rename project directory for Docker
+      ansible.builtin.command: >
+        mv /var/www/html/{{ ENV }}/{{ project_name }}
+          /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+      when:
+        - docker_project_dir.stat.exists
+        - not docker_project_target_dir.stat.exists
+
+    - name: Check if .docker.env exists
+      ansible.builtin.stat:
+        path: ".docker.env"
+      register: docker_env_file
+
+
+    - name: Copy Docker environment file
+      ansible.builtin.template:
+        src: .docker.env
+        dest: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}/.docker.env
+        owner: "{{ username }}"
+        group: "{{ groupname }}"
+        mode: '0644'
+      when: docker_env_file.stat.exists
+
+    # - name: Add nginx site for Docker
+    #   ansible.builtin.template:
+    #     src: php-nginx.conf.j2
+    #     dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+    #     mode: '0644'
+
+    # - name: Create symlink to enable Docker site
+    #   ansible.builtin.file:
+    #     src: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+    #     dest: /etc/nginx/sites-enabled/{{project_name}}-{{ENV}}.com.conf
+    #     state: link
+
+    - name: Install wget
+      apt:
+        name: wget
+        state: present
+        update_cache: yes
+
+
+    # - name: Start Docker containers
+    #   ansible.builtin.command:
+    #     cmd: docker-compose --env-file .docker.env up -d --build --remove-orphans
+    #   become: true
+    #   become_user: "{{username}}"
+    #   args:
+    #     chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+
+    - name: Change project ownership for Docker
+      ansible.builtin.file:
+        path: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+        recurse: yes
+        owner: "{{username}}"
+        group: "{{groupname}}"
+
+ 
+#-------------------------------------------------------------------------------#
+#                          php-setup  (docker)                                  #                         
+#-------------------------------------------------------------------------------#
+
+
+- name: PHP Docker setup
+  when: project_type == 'php-docker'
+  block:
+    - name: Check if .env already exists
+      ansible.builtin.stat:
+        path: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/.env
+      register: env_file
+
+    - name: Copy .env.example to .env (if .env doesn't  exist)
+      ansible.builtin.copy:
+        src: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/.env.example
+        dest: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/.env
+        remote_src: yes
+      when:
+        - not env_file.stat.exists
+
+    - name: Set database name for PHP Docker
+      lineinfile: 
+        dest: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/.env
+        regexp: '^DB_DATABASE='
+        line: DB_DATABASE={{db_name}}
+
+    - name: Set database username for PHP Docker
+      lineinfile: 
+        dest: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/.env
+        regexp: '^DB_USERNAME='
+        line: DB_USERNAME={{db_user}}
+
+    - name: Set database password for PHP Docker
+      lineinfile: 
+        dest: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/.env
+        regexp: '^DB_PASSWORD='
+        line: DB_PASSWORD={{db_pass}}
+
+    - name: Set database host for PHP Docker
+      lineinfile: 
+        dest: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/.env
+        regexp: '^DB_HOST='
+        line: DB_HOST={{db_host}}
+
+    
+    - name: Add nginx site for Docker
+      ansible.builtin.template:
+        src: php-nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+        mode: '0644'
+
+    - name: Create symlink to enable Docker site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+        dest: /etc/nginx/sites-enabled/{{project_name}}-{{ENV}}.com.conf
+        state: link
+
+
+    # - name: Set server root for PHP Docker
+    #   lineinfile: 
+    #     dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+    #     regexp: 'root /var/www/html/project/public' 
+    #     line: "root /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/public;"
+
+    # - name: Change PHP port in nginx config
+    #   ansible.builtin.replace: 
+    #     dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+    #     regexp: "9000" 
+    #     replace: "{{php_port}}"
+
+
+    - name: Start Docker containers
+      ansible.builtin.command:
+        cmd: docker-compose --env-file .docker.env up -d --build --remove-orphans
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+
+    - name: Run composer install inside PHP Docker container
+      ansible.builtin.command:
+        cmd: docker-compose exec php composer install
+      become: true
+      become_user: "{{ username }}"
+      args:
+        chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+
+    - name: Generate Laravel key 
+      ansible.builtin.command:
+        cmd: docker-compose exec php php artisan key:generate
+      become: true
+      become_user: "{{ username }}"
+      args:
+        chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+
+    - name: Run Migrations
+      ansible.builtin.command:
+        cmd: docker-compose exec php php artisan migrate
+      become: true
+      become_user: "{{ username }}"
+      args:
+        chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+
+    - name: Clear cache
+      ansible.builtin.command:
+        cmd: docker-compose exec php php artisan config:cache
+      become: true
+      become_user: "{{ username }}"
+      args:
+        chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+
+    # - name: Run composer install inside PHP container
+    #   command: docker-compose run --rm php composer install
+    #   args:
+    #     chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+
+
+
+    # - name: Generate Laravel key in PHP Docker
+    #   ansible.builtin.command:
+    #     cmd: docker-compose run --rm php php artisan key:generate
+    #   become: true
+    #   become_user: "{{username}}"
+    #   args:
+    #     chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+
+    # - name: Run migrations in PHP Docker
+    #   ansible.builtin.command:
+    #     cmd: docker-compose run --rm php php artisan migrate
+    #   become: true
+    #   become_user: "{{username}}"
+    #   args:
+    #     chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+
+    # - name: Clear cache in PHP Docker
+    #   ansible.builtin.command:
+    #     cmd: docker-compose run --rm php php artisan config:cache
+    #   become: true
+    #   become_user: "{{username}}"
+    #   args:
+    #     chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+
+    - name: Change storage ownership for PHP Docker
+      ansible.builtin.file:
+        path: "{{ item }}"
+        recurse: yes
+        owner: "{{username}}"
+        group: "www-data" 
+        mode: 0775
+      loop:
+        - /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/storage
+        - /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/bootstrap/cache
+
+    - name: Restart nginx service
+      service: 
+        name: nginx
+        state: restarted
+        enabled: yes
+
+
+#-------------------------------------------------------------------------------#
+#                          Nodejs-setup (docker)                                #                         
+#-------------------------------------------------------------------------------#
+
+- name: Node.js Docker setup
+  when: project_type == 'nodejs-docker'
+  block:
+
+    - name: Start Docker containers
+      ansible.builtin.command:
+        cmd: docker-compose up -d --build --remove-orphans
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+
+    # - name: Run npm install in each service with package.json
+    #   ansible.builtin.command:
+    #     cmd: docker-compose exec {{ item }} npm install
+    #   become: true
+    #   become_user: "{{ username }}"
+    #   loop: "{{ npm_services }}"
+    #   args:
+    #     chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+    #   ignore_errors: yes
+
+
+    # - name: Build nodejs app
+    #   ansible.builtin.command:
+    #     cmd: docker-compose exec client npm run build
+    #   become: true
+    #   become_user: "{{ username }}"
+    #   args:
+    #     chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+
+
+
+    - name: Add nginx site for Docker
+      ansible.builtin.template:
+        src: nodejs-nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+        mode: '0644'
+
+    - name: Create symlink to enable Docker site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+        dest: /etc/nginx/sites-enabled/{{project_name}}-{{ENV}}.com.conf
+        state: link
+
+    - name: Restart nginx for Node.js Docker
+      service: 
+        name: nginx
+        state: restarted
+        enabled: yes
+
+#-------------------------------------------------------------------------------#
+#                          React-setup (docker)                                 #                         
+#-------------------------------------------------------------------------------#
+
+- name: React Docker setup
+  when: project_type == 'react-docker'
+  block:
+    - name: Create nginx configuration for React Docker
+      template:
+        src: nodejs-nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+        mode: '0644'
+
+    - name: Build the containers
+      ansible.builtin.command:
+        cmd: docker-compose up -d --build
+        become: true
+        become_user: "{{ username}}"
+        args:
+          chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+
+    - name: Install npm dependencies in React Docker
+      ansible.builtin.command:
+        cmd: docker-compose exec react npm install
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+      ignore_errors: yes
+
+    - name: Build React application in Docker
+      ansible.builtin.command:
+        cmd: docker-compose exec react npm run build
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+      ignore_errors: yes
+
+    - name: Copy built files from container to host
+      ansible.builtin.command:
+        cmd: docker cp {{project_name}}-{{ENV}}_react_1:/app/build /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/
+      become: true
+      become_user: "{{username}}"
+      ignore_errors: yes
+
+    - name: Restart nginx for React Docker
+      service: 
+        name: nginx
+        state: restarted
+        enabled: yes
+
+# Java Docker specific tasks
+- name: Java Docker setup
+  when: project_type == 'java-docker'
+  block:
+    - name: Create nginx configuration for Java Docker
+      template:
+        src: java-nginx.conf
+        dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+        mode: '0644'
+
+

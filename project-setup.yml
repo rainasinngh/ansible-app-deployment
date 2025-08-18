@@ -1,0 +1,9 @@
+- name: project-setup
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+   - name: project-setup
+     import_role:
+       name: project-setup

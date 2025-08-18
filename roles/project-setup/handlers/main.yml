@@ -1,0 +1,10 @@
+- name: reload apt
+  apt:
+    update_cache: yes
+
+
+- name: restart java app
+  ansible.builtin.systemd:
+    name: "{{ project_name }}"
+    state: restarted
+    daemon_reload: yes

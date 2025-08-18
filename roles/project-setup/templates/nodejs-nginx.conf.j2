@@ -1,0 +1,26 @@
+server {
+    listen 80;
+    server_name {{ project_name }}-{{ ENV }}.com;
+    root /var/www/html/{{ ENV }}/{{ project_name }};
+
+    access_log /var/log/nginx/{{ project_name }}_access.log;
+    error_log /var/log/nginx/{{ project_name }}_error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ WEB_PORT }};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    location ~ /\. {
+        deny all;
+
+    }
+    
+    } 
