@@ -4,74 +4,74 @@
 #                               SYSTEM UPDATE                                  #
 #------------------------------------------------------------------------------#
 
-# - name: gather facts
-#   setup:
-#     gather_subset: distribution,!all,!min
+- name: gather facts
+  setup:
+    gather_subset: distribution,!all,!min
 
-# - name: Update Ubuntu Server Packages
-#   apt:
-#     update_cache: yes
+- name: Update Ubuntu Server Packages
+  apt:
+    update_cache: yes
 
-# - name: Upgrade Ubuntu Server Packages
-#   apt:
-#     upgrade: yes
+- name: Upgrade Ubuntu Server Packages
+  apt:
+    upgrade: yes
 
 #-------------------------------------------------------------------------------#
 #                          Install and Enable Nginx                             #                         
 #-------------------------------------------------------------------------------#
 
-# - name: Install Nginx Service
-#   apt: 
-#     name: nginx
-#     state: present
+- name: Install Nginx Service
+  apt: 
+    name: nginx
+    state: present
 
-# - name: Start & Enable Nginx Service
-#   service:
-#     name: nginx
-#     state: started
-#     enabled: yes
+- name: Start & Enable Nginx Service
+  service:
+    name: nginx
+    state: started
+    enabled: yes
 
    
 #--------------------------------------------------------------------------------#
 #                          Start docker engine setup                             #                         
 #--------------------------------------------------------------------------------#
 
-# - name: Docker Engine Setup
-#   when: project_type in ["nodejs-docker" , "php-docker" , "java-docker" , "react-docker"]
-#   block:
-#     - name: Install prerequisites
-#       apt:
-#         name: "{{ item }}"
-#         state: present
-#       loop:
-#         - apt-transport-https
-#         - ca-certificates
-#         - curl
-#         - software-properties-common
+- name: Docker Engine Setup
+  when: project_type in ["nodejs-docker" , "php-docker" , "java-docker" , "react-docker"]
+  block:
+    - name: Install prerequisites
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - software-properties-common
 
-#     - name: Add Docker GPG key
-#       shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-#       args:
-#         executable: /bin/bash
+    - name: Add Docker GPG key
+      shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+      args:
+        executable: /bin/bash
 
-#     - name: Add Docker repository
-#       shell: echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-#       args:
-#         executable: /bin/bash
+    - name: Add Docker repository
+      shell: echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+      args:
+        executable: /bin/bash
  
-#     - name: Update apt repositories
-#       apt:
-#         update_cache: yes
+    - name: Update apt repositories
+      apt:
+        update_cache: yes
 
-#     - name: Check Docker package policy
-#       command: apt-cache policy docker-ce
-#       register: docker_policy
+    - name: Check Docker package policy
+      command: apt-cache policy docker-ce
+      register: docker_policy
 
-#     - name: Install Docker
-#       apt:
-#         name: docker-ce
-#         state: present
-#       when: "'Installed: (none)' in docker_policy.stdout"
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+      when: "'Installed: (none)' in docker_policy.stdout"
 
 
 # #-------------------------------------------------------------------------------#
@@ -79,29 +79,29 @@
 # #-------------------------------------------------------------------------------#
     
     
-#     - name: Download and install Docker Compose
-#       shell: "curl -SL https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose"
+    - name: Download and install Docker Compose
+      shell: "curl -SL https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose"
 
-#     - name: Set executable permissions
-#       command: "chmod +x /usr/local/bin/docker-compose"
+    - name: Set executable permissions
+      command: "chmod +x /usr/local/bin/docker-compose"
       
-#     - name: Check if /usr/bin/docker-compose exists
-#       ansible.builtin.stat:
-#         path: /usr/bin/docker-compose
-#       register: docker_compose_symlink
+    - name: Check if /usr/bin/docker-compose exists
+      ansible.builtin.stat:
+        path: /usr/bin/docker-compose
+      register: docker_compose_symlink
 
-#     - name: Create docker-compose symlink only if it doesn't exist
-#       ansible.builtin.file:
-#         src: /usr/local/bin/docker-compose
-#         dest: /usr/bin/docker-compose
-#         state: link
-#       when: not docker_compose_symlink.stat.exists
-#       become: yes
+    - name: Create docker-compose symlink only if it doesn't exist
+      ansible.builtin.file:
+        src: /usr/local/bin/docker-compose
+        dest: /usr/bin/docker-compose
+        state: link
+      when: not docker_compose_symlink.stat.exists
+      become: yes
     
-#     - name: Restart Docker service
-#       systemd:
-#         name: docker
-#         state: restarted
+    - name: Restart Docker service
+      systemd:
+        name: docker
+        state: restarted
 
 # #-------------------------------------------------------------------------------#
 # #                          End Docker-Compose Engine Setup                      #                         
@@ -691,34 +691,13 @@
         owner: "{{ username }}"
         group: "{{ groupname }}"
         mode: '0644'
-      when: docker_env_file.stat.exists
-
-    # - name: Add nginx site for Docker
-    #   ansible.builtin.template:
-    #     src: php-nginx.conf.j2
-    #     dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
-    #     mode: '0644'
-
-    # - name: Create symlink to enable Docker site
-    #   ansible.builtin.file:
-    #     src: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
-    #     dest: /etc/nginx/sites-enabled/{{project_name}}-{{ENV}}.com.conf
-    #     state: link
+      when: not docker_env_file.stat.exists
 
     - name: Install wget
       apt:
         name: wget
         state: present
         update_cache: yes
-
-
-    # - name: Start Docker containers
-    #   ansible.builtin.command:
-    #     cmd: docker-compose --env-file .docker.env up -d --build --remove-orphans
-    #   become: true
-    #   become_user: "{{username}}"
-    #   args:
-    #     chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
 
     - name: Change project ownership for Docker
       ansible.builtin.file:
@@ -787,17 +766,17 @@
         state: link
 
 
-    # - name: Set server root for PHP Docker
-    #   lineinfile: 
-    #     dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
-    #     regexp: 'root /var/www/html/project/public' 
-    #     line: "root /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/public;"
+    - name: Set server root for PHP Docker
+      lineinfile: 
+        dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+        regexp: 'root /var/www/html/project/public' 
+        line: "root /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}/public;"
 
-    # - name: Change PHP port in nginx config
-    #   ansible.builtin.replace: 
-    #     dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
-    #     regexp: "9000" 
-    #     replace: "{{php_port}}"
+    - name: Change PHP port in nginx config
+      ansible.builtin.replace: 
+        dest: /etc/nginx/sites-available/{{project_name}}-{{ENV}}.com.conf
+        regexp: "9000" 
+        replace: "{{php_port}}"
 
 
     - name: Start Docker containers
@@ -840,36 +819,36 @@
       args:
         chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
 
-    # - name: Run composer install inside PHP container
-    #   command: docker-compose run --rm php composer install
-    #   args:
-    #     chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+    - name: Run composer install inside PHP container
+      command: docker-compose run --rm php composer install
+      args:
+        chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
 
 
 
-    # - name: Generate Laravel key in PHP Docker
-    #   ansible.builtin.command:
-    #     cmd: docker-compose run --rm php php artisan key:generate
-    #   become: true
-    #   become_user: "{{username}}"
-    #   args:
-    #     chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+    - name: Generate Laravel key in PHP Docker
+      ansible.builtin.command:
+        cmd: docker-compose run --rm php php artisan key:generate
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
 
-    # - name: Run migrations in PHP Docker
-    #   ansible.builtin.command:
-    #     cmd: docker-compose run --rm php php artisan migrate
-    #   become: true
-    #   become_user: "{{username}}"
-    #   args:
-    #     chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+    - name: Run migrations in PHP Docker
+      ansible.builtin.command:
+        cmd: docker-compose run --rm php php artisan migrate
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
 
-    # - name: Clear cache in PHP Docker
-    #   ansible.builtin.command:
-    #     cmd: docker-compose run --rm php php artisan config:cache
-    #   become: true
-    #   become_user: "{{username}}"
-    #   args:
-    #     chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
+    - name: Clear cache in PHP Docker
+      ansible.builtin.command:
+        cmd: docker-compose run --rm php php artisan config:cache
+      become: true
+      become_user: "{{username}}"
+      args:
+        chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
 
     - name: Change storage ownership for PHP Docker
       ansible.builtin.file:
@@ -905,24 +884,14 @@
       args:
         chdir: /var/www/html/{{ENV}}/{{project_name}}-{{ENV}}
 
-    # - name: Run npm install in each service with package.json
-    #   ansible.builtin.command:
-    #     cmd: docker-compose exec {{ item }} npm install
-    #   become: true
-    #   become_user: "{{ username }}"
-    #   loop: "{{ npm_services }}"
-    #   args:
-    #     chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
-    #   ignore_errors: yes
 
-
-    # - name: Build nodejs app
-    #   ansible.builtin.command:
-    #     cmd: docker-compose exec client npm run build
-    #   become: true
-    #   become_user: "{{ username }}"
-    #   args:
-    #     chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
+    - name: Build nodejs app
+      ansible.builtin.command:
+        cmd: docker-compose exec client npm run build
+      become: true
+      become_user: "{{ username }}"
+      args:
+        chdir: /var/www/html/{{ ENV }}/{{ project_name }}-{{ ENV }}
 
 
 
